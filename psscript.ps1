@@ -1,4 +1,4 @@
-# PowerShell script to compare user lists based on the first column (index 0)
+# PowerShell script to compare user lists - simplified version
 
 # Parameters for the file paths - adjust these to your actual file locations
 param (
@@ -19,55 +19,19 @@ catch {
     exit 1
 }
 
-# Get column information
-Write-Host "Examining file structure..."
-$baseHeaders = $baseData[0].PSObject.Properties.Name
-$newHeaders = $newData[0].PSObject.Properties.Name
+# Get all column names
+$baseHeaders = @($baseData[0].PSObject.Properties.Name)
+$newHeaders = @($newData[0].PSObject.Properties.Name)
 
-# Print all column headers to help diagnose
-Write-Host "`nBase file columns: $($baseHeaders -join ', ')"
+Write-Host "Base file columns: $($baseHeaders -join ', ')"
 Write-Host "New file columns: $($newHeaders -join ', ')"
 
-# Let's look at the actual data
-Write-Host "`nExamining first row of base file:"
-$firstBaseRow = $baseData[0]
-foreach ($prop in $baseHeaders) {
-    Write-Host "  $prop = [$($firstBaseRow.$prop)]"
-}
+# Manual selection - hardcode the column names for comparison
+$baseHeader = $baseHeaders[0]  # First column of base file
+$newHeader = $newHeaders[0]    # First column of new file
 
-Write-Host "`nExamining first row of new file:"
-$firstNewRow = $newData[0]
-foreach ($prop in $newHeaders) {
-    Write-Host "  $prop = [$($firstNewRow.$prop)]"
-}
-
-# Try to determine which columns contain usernames to compare
-Write-Host "`nAttempting to identify username columns..."
-
-# Ask user to select columns for comparison
-Write-Host "`nPlease select columns to use for comparison:"
-Write-Host "Base file columns:"
-for ($i = 0; $i -lt $baseHeaders.Count; $i++) {
-    Write-Host "  $i: $($baseHeaders[$i])"
-}
-
-$baseColumnIndex = Read-Host "Enter the number of the column from the base file to use"
-$baseHeader = $baseHeaders[$baseColumnIndex]
-
-Write-Host "`nNew file columns:"
-for ($i = 0; $i -lt $newHeaders.Count; $i++) {
-    Write-Host "  $i: $($newHeaders[$i])"
-}
-
-$newColumnIndex = Read-Host "Enter the number of the column from the new file to use"
-$newHeader = $newHeaders[$newColumnIndex]
-
-Write-Host "`nUsing base column: $baseHeader"
+Write-Host "Using base column: $baseHeader"
 Write-Host "Using new column: $newHeader"
-
-# Create dictionaries for faster lookups
-$baseUserDict = @{}
-$newUserDict = @{}
 
 # Function to clean and normalize values for comparison
 function Clean-Value {
@@ -82,64 +46,63 @@ function Clean-Value {
     return $cleaned.Trim().ToLower()
 }
 
-# Populate dictionaries with cleaned values
-foreach ($baseUser in $baseData) {
-    if ($null -ne $baseUser -and ![string]::IsNullOrWhiteSpace($baseUser.$baseHeader)) {
-        $cleanedValue = Clean-Value -value $baseUser.$baseHeader
-        if (![string]::IsNullOrWhiteSpace($cleanedValue)) {
-            $baseUserDict[$cleanedValue] = $baseUser
-            Write-Host "Added base user: $cleanedValue"
-        }
-    }
-}
-
-foreach ($newUser in $newData) {
-    if ($null -ne $newUser -and ![string]::IsNullOrWhiteSpace($newUser.$newHeader)) {
-        $cleanedValue = Clean-Value -value $newUser.$newHeader
-        if (![string]::IsNullOrWhiteSpace($cleanedValue)) {
-            $newUserDict[$cleanedValue] = $newUser
-            Write-Host "Added new user: $cleanedValue"
-        }
-    }
-}
+# Create dictionaries for faster lookups
+$baseUserDict = @{}
+$newUserDict = @{}
 
 # Create results array
 $results = @()
 
-# Process base users - find OK and Missing users
-foreach ($baseUser in $baseData) {
-    if ($null -ne $baseUser -and ![string]::IsNullOrWhiteSpace($baseUser.$baseHeader)) {
-        $cleanedValue = Clean-Value -value $baseUser.$baseHeader
-        if (![string]::IsNullOrWhiteSpace($cleanedValue)) {
-            $status = if ($newUserDict.ContainsKey($cleanedValue)) { "OK" } else { "MISSING - CHECK" }
-            
-            # Create result object with all properties from base user plus status
-            $resultObj = $baseUser.PSObject.Copy()
-            $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value $status
-            $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "Base List"
-            $resultObj | Add-Member -MemberType NoteProperty -Name "CleanedValue" -Value $cleanedValue
-            
-            $results += $resultObj
+# First, process the new users to build the dictionary
+foreach ($newUser in $newData) {
+    $rawValue = $newUser.$newHeader
+    if ($null -ne $rawValue -and $rawValue -ne "") {
+        $cleanedValue = Clean-Value -value $rawValue
+        if ($cleanedValue -ne "") {
+            $newUserDict[$cleanedValue] = $newUser
         }
     }
 }
 
-# Process new users - find New users not in base
-foreach ($newUser in $newData) {
-    if ($null -ne $newUser -and ![string]::IsNullOrWhiteSpace($newUser.$newHeader)) {
-        $cleanedValue = Clean-Value -value $newUser.$newHeader
-        if (![string]::IsNullOrWhiteSpace($cleanedValue)) {
-            if (-not $baseUserDict.ContainsKey($cleanedValue)) {
-                # New user not in base list
-                $resultObj = $newUser.PSObject.Copy()
-                $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value "NEW"
-                $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "New Import"
-                $resultObj | Add-Member -MemberType NoteProperty -Name "CleanedValue" -Value $cleanedValue
-                
-                $results += $resultObj
+# Process base users and check against new users
+foreach ($baseUser in $baseData) {
+    $rawValue = $baseUser.$baseHeader
+    if ($null -ne $rawValue -and $rawValue -ne "") {
+        $cleanedValue = Clean-Value -value $rawValue
+        if ($cleanedValue -ne "") {
+            $status = if ($newUserDict.ContainsKey($cleanedValue)) { "OK" } else { "MISSING - CHECK" }
+            
+            # Create result object
+            $resultObj = [PSCustomObject]@{
+                Username = $rawValue
+                Status = $status
+                Source = "Base List"
+                CleanedValue = $cleanedValue
+            }
+            
+            $results += $resultObj
+            
+            # Remove from new user dict if found (to track only new users later)
+            if ($status -eq "OK") {
+                $newUserDict.Remove($cleanedValue)
             }
         }
     }
+}
+
+# Add remaining new users to results
+foreach ($key in $newUserDict.Keys) {
+    $newUser = $newUserDict[$key]
+    $rawValue = $newUser.$newHeader
+    
+    $resultObj = [PSCustomObject]@{
+        Username = $rawValue
+        Status = "NEW"
+        Source = "New Import"
+        CleanedValue = $key
+    }
+    
+    $results += $resultObj
 }
 
 # Export results to CSV
