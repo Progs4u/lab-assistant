@@ -32,36 +32,49 @@ Write-Host "New import users count: $($newData.Count)"
 $baseUserDict = @{}
 $newUserDict = @{}
 
-# Extract the username from the first column, regardless of its name
-$baseData | ForEach-Object { $baseUserDict[$_.$baseHeader] = $_ }
-$newData | ForEach-Object { $newUserDict[$_.$newHeader] = $_ }
+# Populate dictionaries more safely
+foreach ($baseUser in $baseData) {
+    if ($baseUser -ne $null -and $baseUser.$baseHeader -ne $null) {
+        $baseUserDict[$baseUser.$baseHeader] = $baseUser
+    }
+}
+
+foreach ($newUser in $newData) {
+    if ($newUser -ne $null -and $newUser.$newHeader -ne $null) {
+        $newUserDict[$newUser.$newHeader] = $newUser
+    }
+}
 
 # Create results array
 $results = @()
 
 # Process base users - find OK and Missing users
 foreach ($baseUser in $baseData) {
-    $userName = $baseUser.$baseHeader
-    $status = if ($newUserDict.ContainsKey($userName)) { "OK" } else { "MISSING - CHECK" }
-    
-    # Create result object with all properties from base user plus status
-    $resultObj = $baseUser.PSObject.Copy()
-    $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value $status
-    $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "Base List"
-    
-    $results += $resultObj
+    if ($baseUser -ne $null -and $baseUser.$baseHeader -ne $null) {
+        $userName = $baseUser.$baseHeader
+        $status = if ($newUserDict.ContainsKey($userName)) { "OK" } else { "MISSING - CHECK" }
+        
+        # Create result object with all properties from base user plus status
+        $resultObj = $baseUser.PSObject.Copy()
+        $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value $status
+        $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "Base List"
+        
+        $results += $resultObj
+    }
 }
 
 # Process new users - find New users not in base
 foreach ($newUser in $newData) {
-    $userName = $newUser.$newHeader
-    if (-not $baseUserDict.ContainsKey($userName)) {
-        # New user not in base list
-        $resultObj = $newUser.PSObject.Copy()
-        $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value "NEW"
-        $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "New Import"
-        
-        $results += $resultObj
+    if ($newUser -ne $null -and $newUser.$newHeader -ne $null) {
+        $userName = $newUser.$newHeader
+        if (-not $baseUserDict.ContainsKey($userName)) {
+            # New user not in base list
+            $resultObj = $newUser.PSObject.Copy()
+            $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value "NEW"
+            $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "New Import"
+            
+            $results += $resultObj
+        }
     }
 }
 
