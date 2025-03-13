@@ -28,20 +28,39 @@ Write-Host "New file first column: $newHeader"
 Write-Host "Base users count: $($baseData.Count)"
 Write-Host "New import users count: $($newData.Count)"
 
-# Create dictionaries for faster lookups
+# Debug: Show a sample of values from both files
+Write-Host "`nSample values from base file:"
+$baseData | Select-Object -First 5 | ForEach-Object { Write-Host "  $($baseHeader): [$($_.$baseHeader)]" }
+
+Write-Host "`nSample values from new file:"
+$newData | Select-Object -First 5 | ForEach-Object { Write-Host "  $($newHeader): [$($_.$newHeader)]" }
+
+# Create dictionaries for faster lookups - using cleaned values
 $baseUserDict = @{}
 $newUserDict = @{}
 
-# Populate dictionaries more safely
+# Function to clean and normalize values for comparison
+function Clean-Value {
+    param (
+        [string]$value
+    )
+    
+    if ($null -eq $value) { return "" }
+    return $value.Trim().ToLower()
+}
+
+# Populate dictionaries with cleaned values
 foreach ($baseUser in $baseData) {
-    if ($baseUser -ne $null -and $baseUser.$baseHeader -ne $null) {
-        $baseUserDict[$baseUser.$baseHeader] = $baseUser
+    if ($null -ne $baseUser -and $null -ne $baseUser.$baseHeader) {
+        $cleanedValue = Clean-Value -value $baseUser.$baseHeader
+        $baseUserDict[$cleanedValue] = $baseUser
     }
 }
 
 foreach ($newUser in $newData) {
-    if ($newUser -ne $null -and $newUser.$newHeader -ne $null) {
-        $newUserDict[$newUser.$newHeader] = $newUser
+    if ($null -ne $newUser -and $null -ne $newUser.$newHeader) {
+        $cleanedValue = Clean-Value -value $newUser.$newHeader
+        $newUserDict[$cleanedValue] = $newUser
     }
 }
 
@@ -50,14 +69,15 @@ $results = @()
 
 # Process base users - find OK and Missing users
 foreach ($baseUser in $baseData) {
-    if ($baseUser -ne $null -and $baseUser.$baseHeader -ne $null) {
-        $userName = $baseUser.$baseHeader
-        $status = if ($newUserDict.ContainsKey($userName)) { "OK" } else { "MISSING - CHECK" }
+    if ($null -ne $baseUser -and $null -ne $baseUser.$baseHeader) {
+        $cleanedValue = Clean-Value -value $baseUser.$baseHeader
+        $status = if ($newUserDict.ContainsKey($cleanedValue)) { "OK" } else { "MISSING - CHECK" }
         
         # Create result object with all properties from base user plus status
         $resultObj = $baseUser.PSObject.Copy()
         $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value $status
         $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "Base List"
+        $resultObj | Add-Member -MemberType NoteProperty -Name "CleanedValue" -Value $cleanedValue
         
         $results += $resultObj
     }
@@ -65,13 +85,14 @@ foreach ($baseUser in $baseData) {
 
 # Process new users - find New users not in base
 foreach ($newUser in $newData) {
-    if ($newUser -ne $null -and $newUser.$newHeader -ne $null) {
-        $userName = $newUser.$newHeader
-        if (-not $baseUserDict.ContainsKey($userName)) {
+    if ($null -ne $newUser -and $null -ne $newUser.$newHeader) {
+        $cleanedValue = Clean-Value -value $newUser.$newHeader
+        if (-not $baseUserDict.ContainsKey($cleanedValue)) {
             # New user not in base list
             $resultObj = $newUser.PSObject.Copy()
             $resultObj | Add-Member -MemberType NoteProperty -Name "Status" -Value "NEW"
             $resultObj | Add-Member -MemberType NoteProperty -Name "Source" -Value "New Import"
+            $resultObj | Add-Member -MemberType NoteProperty -Name "CleanedValue" -Value $cleanedValue
             
             $results += $resultObj
         }
